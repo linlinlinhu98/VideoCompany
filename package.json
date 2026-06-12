@@ -1,0 +1,23 @@
+{
+  "name": "video-company",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Visual Conversation Assistant — camera + microphone + vision AI",
+  "workspaces": [
+    "shared",
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w shared && npm run build -w server && npm run build -w client",
+    "lint": "npm run lint -w client && npm run lint -w server",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w client && npm run typecheck -w server",
+    "test": "npm run test -w client && npm run test -w server",
+    "clean": "rm -rf node_modules client/node_modules server/node_modules shared/node_modules client/dist server/dist shared/dist"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.0"
+  }
+}
