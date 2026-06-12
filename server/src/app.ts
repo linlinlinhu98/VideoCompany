@@ -4,9 +4,10 @@ import { config } from './config.js';
 import { logger } from './utils/logger.js';
 import { healthRoutes } from './routes/health.js';
 import { sessionRoutes } from './routes/session.js';
+import { initSocketIO } from './ws/index.js';
 
 const app = Fastify({
-  logger: false, // We use pino directly
+  logger: false,
   disableRequestLogging: true,
 });
 
@@ -21,4 +22,17 @@ await app.register(cors, {
 await app.register(healthRoutes, { prefix: '/api' });
 await app.register(sessionRoutes, { prefix: '/api' });
 
-export { app as fastify };
+// Initialize Socket.IO on the underlying HTTP server
+const io = initSocketIO(app.server);
+
+// Graceful shutdown
+const shutdownSignals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+for (const signal of shutdownSignals) {
+  process.on(signal, async () => {
+    logger.info({ signal }, 'Shutting down...');
+    await app.close();
+    process.exit(0);
+  });
+}
+
+export { app as fastify, io };
