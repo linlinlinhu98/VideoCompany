@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { useMediaStore } from '@/stores/useMediaStore';
 import { captureFrame, blobToBase64, hashBase64, getThumbnailImageData, computeFrameDiff, shouldSendFrame } from '@/lib/frame-utils';
 import { DEFAULT_FRAME_SIZE, JPEG_QUALITY } from 'shared';
@@ -18,9 +18,11 @@ interface UseFrameCaptureOptions {
 export function useFrameCapture(options: UseFrameCaptureOptions = {}) {
   const { maxSize = DEFAULT_FRAME_SIZE, quality = JPEG_QUALITY, captureInterval = 1000 } = options;
 
-  const captureTimerRef = useRef<number | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const captureTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevThumbnailRef = useRef<ImageData | null>(null);
   const lastSentHashRef = useRef<string | null>(null);
+  const isCapturingRef = useRef(false);
 
   const {
     cameraState,
@@ -37,7 +39,9 @@ export function useFrameCapture(options: UseFrameCaptureOptions = {}) {
     video: HTMLVideoElement,
   ): Promise<{ data: string; hash: string; width: number; height: number } | null> => {
     if (!video || video.readyState < 2) return null;
+    if (isCapturingRef.current) return null; // prevent concurrent captures
 
+    isCapturingRef.current = true;
     try {
       // Get thumbnail for diff check
       const thumbData = getThumbnailImageData(video);
@@ -68,6 +72,8 @@ export function useFrameCapture(options: UseFrameCaptureOptions = {}) {
     } catch (err) {
       console.error('Frame capture error:', err);
       return null;
+    } finally {
+      isCapturingRef.current = false;
     }
   }, [maxSize, quality, setLastFrame, incrementFrameCount]);
 
@@ -75,14 +81,17 @@ export function useFrameCapture(options: UseFrameCaptureOptions = {}) {
    * Start periodic frame capture from a video element.
    */
   const startCapturing = useCallback((video: HTMLVideoElement) => {
+    videoRef.current = video;
     if (captureTimerRef.current) return;
 
     // Capture immediately
     captureCurrentFrame(video);
 
     // Then capture at interval
-    captureTimerRef.current = window.setInterval(() => {
-      captureCurrentFrame(video);
+    captureTimerRef.current = setInterval(() => {
+      if (videoRef.current) {
+        captureCurrentFrame(videoRef.current);
+      }
     }, captureInterval);
   }, [captureInterval, captureCurrentFrame]);
 
@@ -94,7 +103,15 @@ export function useFrameCapture(options: UseFrameCaptureOptions = {}) {
       clearInterval(captureTimerRef.current);
       captureTimerRef.current = null;
     }
+    videoRef.current = null;
   }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopCapturing();
+    };
+  }, [stopCapturing]);
 
   return {
     captureCurrentFrame,

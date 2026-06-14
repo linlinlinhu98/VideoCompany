@@ -1,12 +1,14 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { useMediaStore } from '@/stores/useMediaStore';
 import { useConversationStore } from '@/stores/useConversationStore';
+import { useCostStore } from '@/stores/useCostStore';
 import { useCamera } from '@/hooks/useCamera';
 import { useMicrophone } from '@/hooks/useMicrophone';
 import { useFrameCapture } from '@/hooks/useFrameCapture';
 import { useVAD } from '@/hooks/useVAD';
 import { useSpeechRecognition, isSpeechRecognitionSupported } from '@/hooks/useSpeechRecognition';
 import { useSpeechSynthesis } from '@/hooks/useSpeechSynthesis';
+import { useWebSocket } from '@/hooks/useWebSocket';
 import { PermissionGate } from '@/components/common/PermissionGate';
 import { VideoFeed } from '@/components/video/VideoFeed';
 import { ChatPanel } from '@/components/chat/ChatPanel';
@@ -15,6 +17,10 @@ import { ConnectionIndicator } from '@/components/common/ConnectionIndicator';
 import { SettingsPanel } from '@/components/settings/SettingsPanel';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import type { Message } from 'shared';
+
+function genSessionId(): string {
+  return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 let msgCounter = 0;
 function genId(): string {
@@ -36,6 +42,7 @@ export function App() {
   const [isMicActive, setIsMicActive] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const sessionIdRef = useRef<string>(genSessionId());
 
   // Camera
   const { videoRef, startCamera } = useCamera({
@@ -58,6 +65,34 @@ export function App() {
     language: 'zh-CN',
     rate: 1,
   });
+
+  // WebSocket connection
+  const {
+    connectionState,
+    sendMessage,
+    connect: wsConnect,
+  } = useWebSocket();
+
+  // Auto-speak new AI responses
+  const lastAssistantMsgId = useRef<string | null>(null);
+  useEffect(() => {
+    const unsubscribe = useConversationStore.subscribe((state, prev) => {
+      const lastMsg = state.messages[state.messages.length - 1];
+      if (
+        lastMsg &&
+        lastMsg.role === 'assistant' &&
+        lastMsg.id !== lastAssistantMsgId.current &&
+        !lastMsg.isError
+      ) {
+        lastAssistantMsgId.current = lastMsg.id;
+        setIsProcessing(false);
+        if (ttsSupported) {
+          speak(lastMsg.text);
+        }
+      }
+    });
+    return unsubscribe;
+  }, [speak, ttsSupported]);
 
   // Speech recognition
   const {
@@ -95,7 +130,7 @@ export function App() {
     },
   });
 
-  /** Send user message to conversation store */
+  /** Send user message to conversation store and backend via WebSocket */
   const handleUserMessage = useCallback(
     (text: string) => {
       if (!text.trim()) return;
@@ -122,38 +157,22 @@ export function App() {
       addMessage(userMsg);
       setIsProcessing(true);
 
-      // Simulate AI response (Phase 3/4 will connect to real backend)
-      simulateAIResponse(text, currentFrame);
+      // Send to backend via WebSocket — response handled by useWebSocket event listeners
+      sendMessage({
+        sessionId: sessionIdRef.current,
+        text: text.trim(),
+        frame: currentFrame
+          ? {
+              data: currentFrame.data,
+              mimeType: currentFrame.mimeType,
+              width: currentFrame.width,
+              height: currentFrame.height,
+              hash: currentFrame.hash,
+            }
+          : undefined,
+      });
     },
-    [addMessage, lastFrameData, lastFrameHash, lastFrameWidth, lastFrameHeight],
-  );
-
-  /** Temporary: simulate AI response until backend is ready */
-  const simulateAIResponse = useCallback(
-    (userText: string, frame?: Message['frame']) => {
-      setTimeout(() => {
-        const hasFrame = frame ? '我看到你摄像头中的画面了。' : '';
-        const responseText = `${hasFrame}你说："${userText}"。\n\n（这是本地模拟回复。Phase 3-4 将接入真实的 AI 视觉模型。）`;
-
-        const aiMsg: Message = {
-          id: genId(),
-          role: 'assistant',
-          text: responseText,
-          timestamp: Date.now(),
-          modelId: 'gpt-4o-mini',
-          cost: 0.001,
-        };
-
-        addMessage(aiMsg);
-        setIsProcessing(false);
-
-        // Speak response
-        if (ttsSupported) {
-          speak(responseText);
-        }
-      }, 800);
-    },
-    [addMessage, speak, ttsSupported],
+    [addMessage, sendMessage, lastFrameData, lastFrameHash, lastFrameWidth, lastFrameHeight],
   );
 
   /** Handle mic button toggle */
@@ -175,7 +194,7 @@ export function App() {
     [handleUserMessage],
   );
 
-  /** Initialize all media devices */
+  /** Initialize all media devices and WebSocket connection */
   const handleInitialize = useCallback(async () => {
     await startCamera();
     await startMicrophone();
@@ -193,8 +212,11 @@ export function App() {
       startCapturing(videoRef.current);
     }
 
+    // Connect to backend WebSocket
+    wsConnect(sessionIdRef.current);
+
     setInitialized(true);
-  }, [startCamera, startMicrophone, startVAD, startCapturing, videoRef, setInitialized]);
+  }, [startCamera, startMicrophone, startVAD, startCapturing, videoRef, wsConnect, setInitialized]);
 
   if (!isInitialized) {
     return <PermissionGate onGranted={handleInitialize}><div /></PermissionGate>;
@@ -218,7 +240,7 @@ export function App() {
 
         <div className="flex items-center gap-3">
           <CostBadge />
-          <ConnectionIndicator state="disconnected" />
+          <ConnectionIndicator state={connectionState} />
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}

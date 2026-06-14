@@ -112,13 +112,18 @@ export function useSpeechSynthesis(
 
       utterance.onstart = () => setIsSpeaking(true);
       utterance.onend = () => {
-        setIsSpeaking(false);
-        utteranceRef.current = null;
+        // Only clear if this is still the current utterance (race condition guard)
+        if (utteranceRef.current === utterance) {
+          setIsSpeaking(false);
+          utteranceRef.current = null;
+        }
       };
       utterance.onerror = (event) => {
         console.warn('TTS error:', event.error);
-        setIsSpeaking(false);
-        utteranceRef.current = null;
+        if (utteranceRef.current === utterance) {
+          setIsSpeaking(false);
+          utteranceRef.current = null;
+        }
       };
 
       utteranceRef.current = utterance;

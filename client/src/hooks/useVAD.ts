@@ -39,6 +39,7 @@ export function useVAD(options: UseVADOptions = {}) {
   const isSpeakingRef = useRef(false);
   const speechStartTimeRef = useRef(0);
   const silenceTimerRef = useRef<number | null>(null);
+  const pollIntervalRef = useRef<number | null>(null);
   const audioChunksRef = useRef<Float32Array[]>([]);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -125,16 +126,16 @@ export function useVAD(options: UseVADOptions = {}) {
     };
 
     source.connect(scriptProcessor);
-    scriptProcessor.connect(audioContext.destination);
+    // Connect to a silent GainNode to keep the audio graph alive without feedback
+    const gainNode = audioContext.createGain();
+    gainNode.gain.value = 0;
+    scriptProcessor.connect(gainNode);
+    gainNode.connect(audioContext.destination);
     scriptProcessorRef.current = scriptProcessor;
 
     // Start energy-based VAD polling
-    const pollInterval = setInterval(checkAudioLevel, 100);
+    pollIntervalRef.current = window.setInterval(checkAudioLevel, 100);
     updateVadState('listening');
-
-    return () => {
-      clearInterval(pollInterval);
-    };
   }, [checkAudioLevel, updateVadState]);
 
   /**
@@ -149,6 +150,10 @@ export function useVAD(options: UseVADOptions = {}) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
+    if (pollIntervalRef.current !== null) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
     isSpeakingRef.current = false;
     audioChunksRef.current = [];
     updateVadState('idle');
@@ -158,6 +163,8 @@ export function useVAD(options: UseVADOptions = {}) {
   useEffect(() => {
     return () => {
       if (silenceTimerRef.current !== null) clearTimeout(silenceTimerRef.current);
+      if (pollIntervalRef.current !== null) clearInterval(pollIntervalRef.current);
+      if (scriptProcessorRef.current) scriptProcessorRef.current.disconnect();
     };
   }, []);
 

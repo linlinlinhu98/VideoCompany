@@ -37,16 +37,12 @@ export class ClaudeVisionClient implements VisionClient {
     const content = response.content[0];
     const text = content?.type === 'text' ? content.text : '';
 
-    let inputTokens = response.usage?.input_tokens || 0;
+    const inputTokens = response.usage?.input_tokens || 0;
     const outputTokens = response.usage?.output_tokens || 0;
     const cacheHit = response.usage?.cache_read_input_tokens != null;
     const cachedInputTokens = response.usage?.cache_read_input_tokens || 0;
 
-    // Remove cached tokens from input count for cost (cached are 90% cheaper)
-    if (cacheHit) {
-      inputTokens -= cachedInputTokens;
-    }
-
+    // Return raw token counts — cost tracker handles cached token pricing
     return {
       text,
       inputTokens,
@@ -84,10 +80,7 @@ export class ClaudeVisionClient implements VisionClient {
     cachedInputTokens = finalMessage.usage?.cache_read_input_tokens || 0;
     cacheHit = cachedInputTokens > 0;
 
-    if (cacheHit) {
-      inputTokens -= cachedInputTokens;
-    }
-
+    // Return raw token counts — cost tracker handles cached token pricing
     return {
       text: fullText,
       inputTokens,

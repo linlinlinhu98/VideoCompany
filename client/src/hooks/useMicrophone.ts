@@ -18,10 +18,10 @@ export function useMicrophone(options: UseMicrophoneOptions = {}) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
 
   const {
     micState,
-    micStream,
     setMicState,
     setMicStream,
     setMicError,
@@ -52,6 +52,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}) {
       analyserRef.current = analyser;
       sourceRef.current = source;
 
+      micStreamRef.current = stream;
       setMicStream(stream);
       setMicState('active');
     } catch (err) {
@@ -62,8 +63,9 @@ export function useMicrophone(options: UseMicrophoneOptions = {}) {
   }, [echoCancellation, noiseSuppression, setMicState, setMicStream, setMicError]);
 
   const stopMicrophone = useCallback(() => {
-    if (micStream) {
-      micStream.getTracks().forEach((track) => track.stop());
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((track) => track.stop());
+      micStreamRef.current = null;
       setMicStream(null);
     }
     if (sourceRef.current) {
@@ -76,21 +78,21 @@ export function useMicrophone(options: UseMicrophoneOptions = {}) {
     }
     analyserRef.current = null;
     setMicState('idle');
-  }, [micStream, setMicStream, setMicState]);
+  }, [setMicStream, setMicState]);
 
   const muteMicrophone = useCallback(() => {
-    if (micStream) {
-      micStream.getAudioTracks().forEach((track) => (track.enabled = false));
+    if (micStreamRef.current) {
+      micStreamRef.current.getAudioTracks().forEach((track) => (track.enabled = false));
       setMicState('muted');
     }
-  }, [micStream, setMicState]);
+  }, [setMicState]);
 
   const unmuteMicrophone = useCallback(() => {
-    if (micStream) {
-      micStream.getAudioTracks().forEach((track) => (track.enabled = true));
+    if (micStreamRef.current) {
+      micStreamRef.current.getAudioTracks().forEach((track) => (track.enabled = true));
       setMicState('active');
     }
-  }, [micStream, setMicState]);
+  }, [setMicState]);
 
   /**
    * Get the current audio level (0-1) from the analyser.
@@ -108,11 +110,12 @@ export function useMicrophone(options: UseMicrophoneOptions = {}) {
     return Math.sqrt(sum / data.length);
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — use ref to always get the latest stream
   useEffect(() => {
     return () => {
-      if (micStream) {
-        micStream.getTracks().forEach((track) => track.stop());
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((track) => track.stop());
+        micStreamRef.current = null;
       }
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => {});
@@ -122,7 +125,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}) {
 
   return {
     micState,
-    micStream,
+    micStream: micStreamRef,
     audioContext: audioContextRef,
     analyser: analyserRef,
     startMicrophone,

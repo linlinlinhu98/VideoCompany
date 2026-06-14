@@ -16,6 +16,7 @@ export function useCamera(options: UseCameraOptions = {}) {
   const { facingMode = 'environment', maxResolution = 1280 } = options;
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
   const {
     cameraState,
     cameraStream,
@@ -36,6 +37,7 @@ export function useCamera(options: UseCameraOptions = {}) {
         audio: false,
       });
 
+      cameraStreamRef.current = stream;
       setCameraStream(stream);
       setCameraState('active');
 
@@ -51,26 +53,27 @@ export function useCamera(options: UseCameraOptions = {}) {
   }, [facingMode, maxResolution, setCameraState, setCameraStream, setCameraError]);
 
   const stopCamera = useCallback(() => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach((track) => track.stop());
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
       setCameraStream(null);
       setCameraState('idle');
     }
-  }, [cameraStream, setCameraStream, setCameraState]);
+  }, [setCameraStream, setCameraState]);
 
   const pauseCamera = useCallback(() => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach((track) => (track.enabled = false));
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => (track.enabled = false));
       setCameraState('paused');
     }
-  }, [cameraStream, setCameraState]);
+  }, [setCameraState]);
 
   const resumeCamera = useCallback(() => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach((track) => (track.enabled = true));
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => (track.enabled = true));
       setCameraState('active');
     }
-  }, [cameraStream, setCameraState]);
+  }, [setCameraState]);
 
   const switchCamera = useCallback(async () => {
     const newMode = facingMode === 'user' ? 'environment' : 'user';
@@ -86,6 +89,7 @@ export function useCamera(options: UseCameraOptions = {}) {
         },
         audio: false,
       });
+      cameraStreamRef.current = stream;
       setCameraStream(stream);
       setCameraState('active');
       if (videoRef.current) {
@@ -97,11 +101,12 @@ export function useCamera(options: UseCameraOptions = {}) {
     }
   }, [facingMode, maxResolution, stopCamera, setCameraState, setCameraStream, setCameraError]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — use ref to always get the latest stream
   useEffect(() => {
     return () => {
-      if (cameraStream) {
-        cameraStream.getTracks().forEach((track) => track.stop());
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+        cameraStreamRef.current = null;
       }
     };
   }, []);

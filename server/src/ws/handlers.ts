@@ -8,6 +8,7 @@ import type {
   CostUpdatePayload,
   StatusPayload,
 } from 'shared';
+import { getDefaultModelForTier } from 'shared';
 import { sessionStore } from './session-store.js';
 import { logger } from '../utils/logger.js';
 import { routeModel } from '../services/vision/router.js';
@@ -54,10 +55,24 @@ export function registerHandlers(socket: Socket): void {
   socket.on('client:message', async (payload: ClientMessagePayload, ack) => {
     try {
       sessionId = payload.sessionId;
+      if (!sessionId || typeof sessionId !== 'string' || sessionId.trim().length === 0) {
+        socket.emit('server:error', {
+          code: 'INVALID_SESSION',
+          message: '无效的会话 ID',
+        });
+        return;
+      }
       const session = sessionStore.getOrCreate(sessionId);
 
-      // ---- Budget check ----
-      const budgetCheck = checkBudget(session.totalCost, session.budgetLimit, 0.01);
+      // ---- Budget check using estimated cost for session's default model tier ----
+      const estimatedTokens = estimateTotalInputTokens(
+        payload.text,
+        payload.frame ? { width: payload.frame.width, height: payload.frame.height } : undefined,
+      );
+      const sessionModel = getDefaultModelForTier(session.modelTier);
+      const estimatedCost = ((estimatedTokens / 1_000_000) * sessionModel.inputCostPer1M) +
+                            ((256 / 1_000_000) * sessionModel.outputCostPer1M); // assume ~256 output tokens
+      const budgetCheck = checkBudget(session.totalCost, session.budgetLimit, estimatedCost);
       if (!budgetCheck.allowed) {
         socket.emit('server:error', {
           code: 'BUDGET_EXCEEDED',
@@ -118,6 +133,7 @@ export function registerHandlers(socket: Socket): void {
       let inputTokens: number;
       let outputTokens: number;
       let cachedInputTokens: number | undefined;
+      let wasError = false;
 
       if (cachedResponse) {
         aiText = `${cachedResponse}\n\n（基于缓存的画面。你的新问题是："${payload.text}"）`;
@@ -156,10 +172,11 @@ export function registerHandlers(socket: Socket): void {
           // Estimate tokens for error response
           inputTokens = estimateTotalInputTokens(payload.text);
           outputTokens = Math.ceil(aiText.length / 3.5);
+          wasError = true;
         }
 
-        // Cache response for identical frames
-        if (userMsg.frame) {
+        // Cache successful responses for identical frames (don't cache errors)
+        if (userMsg.frame && !wasError) {
           frameCache.set(userMsg.frame.hash, aiText);
         }
       }
@@ -254,8 +271,11 @@ export function registerHandlers(socket: Socket): void {
       session.modelTier = payload.modelTier;
     }
     if (payload.budgetLimit !== undefined) {
-      session.budgetLimit = payload.budgetLimit;
-      session.budgetExceeded = session.totalCost >= payload.budgetLimit;
+      const limit = Number(payload.budgetLimit);
+      if (Number.isFinite(limit) && limit > 0 && limit <= 100) {
+        session.budgetLimit = limit;
+        session.budgetExceeded = session.totalCost >= limit;
+      }
     }
 
     const info: SessionInfo = {
